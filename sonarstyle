@@ -1,0 +1,107 @@
+#!/usr/bin/env php
+<?php
+$file_base_path = isset($argv[2]) ? $argv[2] : "";
+$working_directory = getcwd();
+$file_name = $argv[1];
+
+$file_path = $working_directory . "/" . $file_name;
+
+// Load the file
+$report = file_get_contents($file_path);
+libxml_use_internal_errors(true);
+$dom = new DOMDocument();
+$dom->loadHTML($report);
+$xpath = new DOMXPath($dom);
+
+// Traverse to file list
+$my_xpath_query = "//*[@id=\"summary-per-file\"]/table";
+$files = $xpath->query($my_xpath_query);
+
+$files_bag = [];
+
+foreach ($files as $file) {
+    // New file
+    $current_file = [];
+    $current_file['path'] = trim($file->childNodes->item(0)->childNodes->item(0)->childNodes->item(0)->textContent);
+    $issues_query = "tbody/tr[last()]/td/table/tr";
+    $issues = $xpath->query($issues_query, $file);
+
+    $current_file["issues"] = [];
+    foreach ($issues as $issue) {
+
+        $id = $issue->attributes->getNamedItem("id")->value;
+        preg_match('/([0-9]+)LV([0-9]+)/', $id, $matches, PREG_OFFSET_CAPTURE);
+        if ($matches != []) {
+            $current_line = $matches[2][0];
+            $issue_on_line_count = ($issue->childNodes->item(2)->childNodes->length - 1) / 2;
+
+            for ($i = 0; $i < $issue_on_line_count; $i++) {
+                $current_issue = [];
+                $real_id = ($i * 2) + 1;
+
+                $long_desc = trim(
+                    $issue->childNodes->item(2)->childNodes->item($real_id)
+                        ->childNodes->item(1)->childNodes->item(3)->textContent
+                );
+                $sonar_id = trim(
+                    $issue->childNodes->item(2)->childNodes->item($real_id)
+                        ->childNodes->item(1)->childNodes->item(7)->textContent
+                );
+                $short_desc = trim(
+                    $issue->childNodes->item(2)->childNodes->item($real_id)
+                        ->childNodes->item(3)->textContent
+                );
+                $severity = trim(
+                    $issue->childNodes->item(2)->childNodes->item($real_id)
+                        ->childNodes->item(1)->childNodes->item(1)->attributes->getNamedItem("class")->value
+                );
+                $mt = [];
+                preg_match('/icon-severity-([a-z]+)/', $severity, $mt, PREG_OFFSET_CAPTURE);
+                $svr = $mt[1][0];
+
+                $current_issue["line"] = $current_line;
+                $current_issue["severity"] = $svr;
+                $current_issue["reason"] = $short_desc;
+                $current_issue["evidence"] = $long_desc;
+                $current_issue["rule"] = $sonar_id;
+
+                $current_file["issues"][] = $current_issue;
+            }
+        }
+    }
+
+    // Add the file to the bag
+    $files_bag[] = $current_file;
+}
+
+echo generateLintReport($files_bag, $file_base_path);
+
+function generateIssueNode($issue)
+{
+    $line = str_replace("\"", "''", $issue["line"]);
+    $severity = str_replace("\"", "''", $issue["severity"]);
+    $reason = str_replace("\"", "''", $issue["reason"]);
+    $evidence = str_replace("\"", "''", $issue["evidence"]);
+    $source = str_replace("\"", "''", $issue["rule"]);
+    return "<error line=\"$line\" column=\"1\" severity=\"$severity\" message=\"$reason: $evidence\" source=\"$source\"/>";
+}
+
+function generateFileNode($file, $file_base_path)
+{
+    $base_path = $file_base_path;
+    $filePath = $base_path . str_replace("\\", "/", $file['path']);
+    $issues_as_text = "";
+    foreach ($file["issues"] as $issue) {
+        $issues_as_text .= generateIssueNode($issue);
+    }
+    return "<file name=\"$filePath\">$issues_as_text</file>";
+}
+
+function generateLintReport(array $files, $file_base_path)
+{
+    $files_as_text = "";
+    foreach ($files as $file) {
+        $files_as_text .= generateFileNode($file, $file_base_path);
+    }
+    return "<?xml version=\"1.0\" encoding=\"UTF-8\"?><checkstyle version=\"5.9\">$files_as_text</checkstyle>";
+}
