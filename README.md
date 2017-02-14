@@ -1,6 +1,8 @@
 # sonarstyle
 Converts sonarlint-cli html reports in a checkstyle compatible XML, offered as is.
 
+Tested with sonarlint CLI 2.1.0.566
+
 ## Usage
 You will need php + dom extension to use this tool (```apt update && apt install php7.0 php7.0-xml``` should do the trick)
 ```
